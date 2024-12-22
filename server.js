@@ -28,6 +28,12 @@ let showPoints = false; // Či hráči vidia stĺpec s bodmi
 //------------------------------------------------------
 app.use(express.static("public"));
 
+// Voliteľné: ručná route pre "/", ak by náhodou public/index.html nebolo.
+// (Ak ho máš, toto kľudne môžeš vynechať.)
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
 //------------------------------------------------------
 // Socket.IO logika
 //------------------------------------------------------
@@ -52,14 +58,14 @@ io.on("connection", (socket) => {
   // Udalosti (events) od hráča
   //-------------------------------
   socket.on("setName", (teamName) => {
-    if (isMod) return; // moderátor nerieši meno
+    if (isMod) return;
     if (!players[socket.id]) return;
     players[socket.id].name = teamName.trim() || "Neznámy tím";
     broadcastPlayerList();
   });
 
   socket.on("buzz", () => {
-    if (isMod) return; // moderátor nekliká
+    if (isMod) return;
     if (!players[socket.id]) return;
 
     // Spustenie kola (ak ešte nie je)
@@ -79,7 +85,7 @@ io.on("connection", (socket) => {
         winner = socket.id;
         io.emit("winner", p.name); // všetci vidia víťaza
       } else {
-        socket.emit("loser");     // neskorší klikač dostane "loser"
+        socket.emit("loser"); // neskorší klikač dostane "loser"
       }
     }
 
@@ -121,7 +127,6 @@ io.on("connection", (socket) => {
   //-------------------------------
   socket.on("disconnect", () => {
     if (!isMod) {
-      // Odstrániť hráča
       delete players[socket.id];
       broadcastPlayerList();
     }
@@ -142,18 +147,14 @@ function sendInitialData(socket, isMod) {
 //------------------------------------------------------
 // Scoreboard
 //------------------------------------------------------
-// Vytvor pole { name, time, difference } a zoradí hráčov
 function buildScoreboardArray() {
-  // Z mapy players vyrobíme pole
-  const arr = Object.values(players).map((p) => {
-    return {
-      name: p.name,
-      time: p.clickTime,
-      difference: 0,
-    };
-  });
+  const arr = Object.values(players).map((p) => ({
+    name: p.name,
+    time: p.clickTime,
+    difference: 0,
+  }));
 
-  // Nájdeme najrýchlejší čas
+  // Najrýchlejší čas
   let fastest = Infinity;
   arr.forEach((item) => {
     if (item.time !== null && item.time < fastest) {
@@ -161,7 +162,7 @@ function buildScoreboardArray() {
     }
   });
 
-  // Vypočítame difference (null, ak time = null)
+  // difference
   arr.forEach((item) => {
     if (item.time === null) {
       item.difference = null;
@@ -170,13 +171,13 @@ function buildScoreboardArray() {
     }
   });
 
-  // Zoradenie: tí, čo klikli, hore, podľa time vzostupne, nezúčastnení dole
- arr.sort((a, b) => {
+  // Zoradenie
+  arr.sort((a, b) => {
     const aNull = a.time === null;
     const bNull = b.time === null;
     if (aNull && bNull) return 0;
-    if (aNull) return 1;  // a ide dole
-    if (bNull) return -1; // b ide dole
+    if (aNull) return 1; // a dole
+    if (bNull) return -1; // b dole
     return a.time - b.time;
   });
 
@@ -184,13 +185,11 @@ function buildScoreboardArray() {
 }
 
 function broadcastScoreboard() {
-  const arr = buildScoreboardArray();
-  io.emit("updateScoreboard", arr);
+  io.emit("updateScoreboard", buildScoreboardArray());
 }
 
 function sendScoreboardToOne(socket) {
-  const arr = buildScoreboardArray();
-  socket.emit("updateScoreboard", arr);
+  socket.emit("updateScoreboard", buildScoreboardArray());
 }
 
 //------------------------------------------------------
@@ -199,29 +198,21 @@ function sendScoreboardToOne(socket) {
 function buildPointsArray(forMod = false) {
   return Object.values(players).map((p) => {
     let thePoints = p.points;
-    // Ak je to hráč a showPoints je false => body = null
     if (!forMod && !showPoints) {
       thePoints = null;
     }
-    return {
-      name: p.name,
-      points: thePoints,
-    };
+    return { name: p.name, points: thePoints };
   });
 }
 
-// Pošle body len jednému socketu
 function sendPointsToOne(socket, isMod) {
-  const arr = buildPointsArray(isMod);
-  socket.emit("pointsUpdated", arr);
+  socket.emit("pointsUpdated", buildPointsArray(isMod));
 }
 
-// Každému socketu zvlášť => ak je to mod, dostane reálne body, ak hráč, tak zohľadní showPoints
 function broadcastPointsUpdate() {
   for (const [socketId, sock] of io.sockets.sockets) {
-    const isMod = sock.handshake.query.mod === "true";
-    const arr = buildPointsArray(isMod);
-    sock.emit("pointsUpdated", arr);
+    const m = sock.handshake.query.mod === "true";
+    sock.emit("pointsUpdated", buildPointsArray(m));
   }
 }
 
@@ -231,13 +222,16 @@ function broadcastPointsUpdate() {
 function broadcastPlayerList() {
   const names = Object.values(players).map((p) => p.name);
   io.emit("playerList", names);
+
+  // Zavoláme scoreboard, aby sa noví hráči zobrazili hneď.
+  broadcastScoreboard();
 }
 
 //------------------------------------------------------
 // Spustenie kola na `resetTime` sekúnd
 //------------------------------------------------------
 function startRoundTimer() {
-  if (roundTimer) return; // už beží
+  if (roundTimer) return;
   roundTimer = setTimeout(() => {
     resetGame();
     roundTimer = null;
@@ -254,15 +248,21 @@ function resetGame() {
   for (const id in players) {
     players[id].clickTime = null;
   }
-  io.emit("reset");         // povieme klientom, že všetko nech resetnú
-  broadcastPlayerList();    // aby sa aktualizoval zoznam (časy = null)
+  io.emit("reset");
+  broadcastPlayerList();
 }
 
 //------------------------------------------------------
-// Spustenie servera
+// Lokálne spustenie (len ak nie sme na Verceli)
 //------------------------------------------------------
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log("Server beží na porte", PORT);
-});
-module.exports = app;
+if (!process.env.VERCEL) {
+  server.listen(PORT, () => {
+    console.log(`Server beží lokálne na porte ${PORT}`);
+  });
+}
+
+//------------------------------------------------------
+// Export pre Vercel serverless
+//------------------------------------------------------
+module.exports = server;
