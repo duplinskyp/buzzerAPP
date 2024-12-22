@@ -1,0 +1,17 @@
+{
+    "name": "buzzer-app",
+    "version": "1.0.0",
+    "description": "Kvíz Buzzer s farbením pozadia a priebežným scoreboardom",
+    "main": "server.js",
+    "scripts": {
+      "start": "node server.js"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "dependencies": {
+      "express": "^4.18.0",
+      "socket.io": "^4.6.0"
+    }
+  }
+  

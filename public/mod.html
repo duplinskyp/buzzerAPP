@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="sk">
+  <head>
+    <meta charset="utf-8" />
+    <title>Moderátor - Kvíz</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        background: #f0f0f0;
+      }
+      .points-input {
+        width: 60px;
+      }
+    </style>
+  </head>
+  <body class="p-4">
+    <div class="container">
+      <h1>Moderátor / Spectator</h1>
+
+      <div class="mb-3">
+        <label>Čas kola (sekundy):</label>
+        <input
+          type="number"
+          id="resetTimeInput"
+          class="form-control"
+          style="max-width: 100px;"
+        />
+        <button class="btn btn-secondary mt-2" id="setResetTimeBtn">Nastaviť čas</button>
+      </div>
+
+      <div class="form-check mb-3">
+        <input class="form-check-input" type="checkbox" id="showPointsCheck" />
+        <label class="form-check-label" for="showPointsCheck">
+          Zobrazovať body hráčom
+        </label>
+      </div>
+
+      <h3>Zoznam tímov a ich body:</h3>
+      <div class="table-responsive" style="max-width: 600px;">
+        <table class="table table-bordered table-sm" id="modTable">
+          <thead>
+            <tr>
+              <th>Meno tímu</th>
+              <th>Body</th>
+              <th>Upraviť</th>
+            </tr>
+          </thead>
+          <tbody id="modTbody"></tbody>
+        </table>
+      </div>
+
+      <hr />
+
+      <h3>Aktuálne časy (scoreboard):</h3>
+      <table class="table table-sm table-bordered" id="scoreboardTable">
+        <thead>
+          <tr>
+            <th>Tím</th>
+            <th>Čas (s)</th>
+            <th>Rozdiel (s)</th>
+          </tr>
+        </thead>
+        <tbody id="scoreboardTbody"></tbody>
+      </table>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+       const socket = io({ query: { mod: "true" } });
+      const resetTimeInput = document.getElementById("resetTimeInput");
+      const setResetTimeBtn = document.getElementById("setResetTimeBtn");
+      const showPointsCheck = document.getElementById("showPointsCheck");
+
+      const modTbody = document.getElementById("modTbody");
+      const scoreboardTbody = document.getElementById("scoreboardTbody");
+
+      let modData = []; // { name, points? }
+      let scoreboardData = []; // { name, time, difference }
+
+      // Po načítaní, spýtame sa servera, aký je resetTime?
+      // (Zatiaľ to nemáme implementované, ale server event "resetTimeChanged" nám povie.)
+      // setResetTimeBtn funguje:
+      setResetTimeBtn.addEventListener("click", () => {
+        const val = parseInt(resetTimeInput.value, 10);
+        if (!isNaN(val)) {
+          socket.emit("setResetTime", val);
+        }
+      });
+
+      // showPointsCheck => toggle
+      showPointsCheck.addEventListener("change", () => {
+        socket.emit("toggleShowPoints");
+      });
+
+      // Server povie, že resetTime sa zmenil
+      socket.on("resetTimeChanged", (val) => {
+        resetTimeInput.value = val;
+      });
+
+      // Body
+      socket.on("pointsUpdated", (dataArray) => {
+        // dataArray = [ { name, points or null }, ... ]
+        modData = dataArray;
+        rebuildModTable();
+      });
+
+      // showPoints zmenené
+      socket.on("showPointsUpdated", (val) => {
+        showPointsCheck.checked = val;
+      });
+
+      // scoreboard
+      socket.on("updateScoreboard", (arr) => {
+        scoreboardData = arr;
+        rebuildScoreboardTable();
+      });
+
+      // Skúsime aj na začiatku vyžiadať scoreboard? (Napriklad by sme poslali event,
+      // server by poslal "updateScoreboard" a "pointsUpdated".)
+      // Tu to pre zjednodušenie neriešime – predpokladáme, že hneď niekto klikne a scoreboard príde.
+
+      function rebuildModTable() {
+        modTbody.innerHTML = "";
+        modData.forEach((item) => {
+          const tr = document.createElement("tr");
+
+          const nameTd = document.createElement("td");
+          nameTd.textContent = item.name;
+
+          const pointsTd = document.createElement("td");
+          pointsTd.textContent = item.points === null ? "?" : item.points;
+
+          const editTd = document.createElement("td");
+          // Tlačidlá +1, +5, -1 len príklad:
+          editTd.innerHTML = `
+            <button class="btn btn-sm btn-success plusOne">+1</button>
+            <button class="btn btn-sm btn-success plusFive">+5</button>
+            <button class="btn btn-sm btn-danger minusOne">-1</button>
+          `;
+
+          // Eventy
+          editTd.querySelector(".plusOne").addEventListener("click", () => {
+            adjustPoints(item.name, 1);
+          });
+          editTd.querySelector(".plusFive").addEventListener("click", () => {
+            adjustPoints(item.name, 5);
+          });
+          editTd.querySelector(".minusOne").addEventListener("click", () => {
+            adjustPoints(item.name, -1);
+          });
+
+          tr.appendChild(nameTd);
+          tr.appendChild(pointsTd);
+          tr.appendChild(editTd);
+
+          modTbody.appendChild(tr);
+        });
+      }
+
+      function rebuildScoreboardTable() {
+        scoreboardTbody.innerHTML = "";
+        // Môžeme zoraďovať, atď. Pre jednoduchosť len zobrazíme.
+        scoreboardData.forEach((p) => {
+          const tr = document.createElement("tr");
+          const nameTd = document.createElement("td");
+          nameTd.textContent = p.name;
+
+          const timeTd = document.createElement("td");
+          if (p.time === null) {
+            timeTd.textContent = "Nezúčastnil";
+          } else {
+            timeTd.textContent = (p.time / 1000).toFixed(2);
+          }
+          const diffTd = document.createElement("td");
+          if (p.difference === null) {
+            diffTd.textContent = "-";
+          } else if (p.difference === 0) {
+            diffTd.textContent = "0.00";
+          } else {
+            diffTd.textContent = "+" + (p.difference / 1000).toFixed(2);
+          }
+
+          tr.appendChild(nameTd);
+          tr.appendChild(timeTd);
+          tr.appendChild(diffTd);
+          scoreboardTbody.appendChild(tr);
+        });
+      }
+
+      function adjustPoints(teamName, delta) {
+        // nájdeme v modData
+        const item = modData.find((x) => x.name === teamName);
+        if (!item) return;
+        let newPoints = (item.points || 0) + delta;
+        if (newPoints < 0) newPoints = 0; // Napr. nechceme ísť do mínusu
+        socket.emit("setPoints", { teamName, points: newPoints });
+      }
+    </script>
+  </body>
+</html>

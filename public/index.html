@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="sk">
+  <head>
+    <meta charset="utf-8" />
+    <title>Kvíz Buzzer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        background: linear-gradient(180deg, #f9f9f9, #eee);
+        transition: background 0.4s ease;
+      }
+      body.winner {
+        background: #28a745 !important;
+      }
+      body.loser {
+        background: #dc3545 !important;
+      }
+      #buzzer {
+        width: min(90vw, 400px);
+        height: min(90vw, 400px);
+        border-radius: 50%;
+        font-size: 1.6rem;
+        font-weight: bold;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 1rem auto;
+      }
+      .pointsCol {
+        display: none; /* stĺpec pre body je default skrytý,
+                         zobrazí sa, ak showPoints = true */
+      }
+      .points-header,
+      .points-cell {
+        /* Môžeme neskôr spraviť .showPoints v body... */
+      }
+    </style>
+  </head>
+  <body class="py-4 text-center">
+    <div class="container">
+      <h1>Kvíz Buzzer</h1>
+      <p class="lead">Počet pripojených hráčov: <span id="playerCount">0</span></p>
+
+      <div style="max-width: 300px; margin: 0 auto;">
+        <input
+          type="text"
+          id="teamNameInput"
+          class="form-control mb-3"
+          placeholder="Zadaj názov tímu"
+        />
+      </div>
+
+      <button id="buzzer" class="btn btn-primary mb-4">Klik!</button>
+
+      <!-- Audio pre víťaza -->
+      <audio id="winnerSound" src="buzzer.mp3" preload="auto"></audio>
+
+      <h3>Tímy:</h3>
+      <div class="table-responsive mx-auto" style="max-width: 600px;">
+        <table class="table table-bordered table-sm" id="playersTable">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>Meno tímu</th>
+              <th>Čas (s)</th>
+              <th>Rozdiel (s)</th>
+              <th class="pointsCol points-header">Body</th>
+            </tr>
+          </thead>
+          <tbody id="playersTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+    const socket = io({ query: { mod: "false" } });
+      const teamNameInput = document.getElementById("teamNameInput");
+      const buzzer = document.getElementById("buzzer");
+      const playerCountSpan = document.getElementById("playerCount");
+      const playersTbody = document.getElementById("playersTbody");
+
+      const winnerSound = document.getElementById("winnerSound");
+
+      let localPlayerNames = [];
+      let showPoints = false; // info z servera, či zobrazovať stĺpec "Body"
+
+      // Na zmenu mena
+      teamNameInput.addEventListener("change", () => {
+        socket.emit("setName", teamNameInput.value);
+      });
+
+      // Klik
+      buzzer.addEventListener("click", () => {
+        socket.emit("buzz");
+      });
+
+      // Zoznam mien
+      socket.on("playerList", (names) => {
+        localPlayerNames = names.slice();
+        playerCountSpan.textContent = names.length;
+        rebuildPlayersTable();
+      });
+
+      // Scoreboard (časy/diffy)
+      socket.on("updateScoreboard", (scoreboard) => {
+        scoreboard.forEach((p) => {
+          const row = findRowByName(p.name);
+          if (!row) return;
+
+          const timeCell = row.querySelector(".timeCell");
+          const diffCell = row.querySelector(".diffCell");
+
+          row.style.backgroundColor = "";
+          row.style.fontWeight = "";
+
+          if (p.time === null) {
+            timeCell.textContent = "Nezúčastnil";
+            diffCell.textContent = "-";
+          } else {
+            const secs = (p.time / 1000).toFixed(2);
+            timeCell.textContent = secs;
+            if (p.difference === 0) {
+              diffCell.textContent = "0.00";
+              row.style.fontWeight = "bold";
+              row.style.backgroundColor = "#cfc";
+            } else {
+              diffCell.textContent = "+" + (p.difference / 1000).toFixed(2);
+            }
+          }
+        });
+      });
+
+      // "winner"
+      socket.on("winner", (winnerName) => {
+        if (winnerName === teamNameInput.value) {
+          document.body.classList.remove("loser");
+          document.body.classList.add("winner");
+          // Prehraj zvuk
+          winnerSound.currentTime = 0;
+          winnerSound.play().catch((err) => {
+            console.log("Audio play error:", err);
+          });
+        } else {
+          document.body.classList.remove("winner");
+          document.body.classList.add("loser");
+        }
+      });
+
+      // "loser"
+      socket.on("loser", () => {
+        if (!document.body.classList.contains("winner")) {
+          document.body.classList.add("loser");
+        }
+      });
+
+      // "reset"
+      socket.on("reset", () => {
+        document.body.classList.remove("winner", "loser");
+        const rows = playersTbody.querySelectorAll("tr");
+        rows.forEach((row) => {
+          row.style.backgroundColor = "";
+          row.style.fontWeight = "";
+          row.querySelector(".timeCell").textContent = "–";
+          row.querySelector(".diffCell").textContent = "–";
+        });
+      });
+
+      // "pointsUpdated" => prišla info o bodoch
+      socket.on("pointsUpdated", (dataArray) => {
+        dataArray.forEach((item) => {
+          const row = findRowByName(item.name);
+          if (!row) return;
+          const cell = row.querySelector(".pointsCell");
+          if (item.points === null) {
+            // null => hide
+            cell.textContent = "–";
+          } else {
+            cell.textContent = item.points;
+          }
+        });
+      });
+
+      // "showPointsUpdated" => server povie, či zobrazovať stĺpec body
+      socket.on("showPointsUpdated", (val) => {
+        showPoints = val;
+        togglePointsColumn(showPoints);
+      });
+
+      // Pomocné funkcie
+      function rebuildPlayersTable() {
+        // Prekreslíme celé <tbody>, doplníme stĺpce: #, meno, čas, diff, body
+        playersTbody.innerHTML = "";
+        localPlayerNames.forEach((name, i) => {
+          const row = document.createElement("tr");
+          row.dataset.playerName = name;
+
+          const cellNum = document.createElement("td");
+          cellNum.textContent = i + 1;
+
+          const cellName = document.createElement("td");
+          cellName.textContent = name;
+
+          const cellTime = document.createElement("td");
+          cellTime.classList.add("timeCell");
+          cellTime.textContent = "–";
+
+          const cellDiff = document.createElement("td");
+          cellDiff.classList.add("diffCell");
+          cellDiff.textContent = "–";
+
+          const cellPoints = document.createElement("td");
+          cellPoints.classList.add("pointsCell", "pointsCol");
+          cellPoints.textContent = "–";
+
+          row.appendChild(cellNum);
+          row.appendChild(cellName);
+          row.appendChild(cellTime);
+          row.appendChild(cellDiff);
+          row.appendChild(cellPoints);
+
+          playersTbody.appendChild(row);
+        });
+
+        // Nastav, či je stĺpec body viditeľný
+        togglePointsColumn(showPoints);
+      }
+
+      function togglePointsColumn(show) {
+        const pointsHeader = document.querySelector(".points-header");
+        if (pointsHeader) {
+          pointsHeader.style.display = show ? "table-cell" : "none";
+        }
+        const cells = document.querySelectorAll(".pointsCell");
+        cells.forEach((c) => {
+          c.style.display = show ? "table-cell" : "none";
+        });
+      }
+
+      function findRowByName(name) {
+        return Array.from(playersTbody.querySelectorAll("tr")).find(
+          (row) => row.dataset.playerName === name
+        );
+      }
+    </script>
+  </body>
+</html>
