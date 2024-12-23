@@ -46,6 +46,14 @@
       <h1>Kvíz Buzzer</h1>
       <p class="lead">Počet pripojených hráčov: <span id="playerCount">0</span></p>
 
+      <!-- Checkbox na OFFLINE mód -->
+      <div class="form-check form-switch mb-3">
+        <input class="form-check-input" type="checkbox" id="offlineModeCheck">
+        <label class="form-check-label" for="offlineModeCheck">
+          Offline mód (iba klaksón)
+        </label>
+      </div>
+
       <div style="max-width: 300px; margin: 0 auto;">
         <input
           type="text"
@@ -57,7 +65,7 @@
 
       <button id="buzzer" class="btn btn-primary mb-4">Klik!</button>
 
-      <!-- Audio pre víťaza -->
+      <!-- Audio pre víťaza (resp. offline klaksón) -->
       <audio id="winnerSound" src="buzzer.mp3" preload="auto"></audio>
 
       <h3>Tímy:</h3>
@@ -77,9 +85,19 @@
       </div>
     </div>
 
+    <!-- Socket.IO klient (na online mód) -->
     <script src="/socket.io/socket.io.js"></script>
     <script>
-    const socket = io({ query: { mod: "false" } });
+      // Pripájame sa na server (keď je offline mód, nebudeme to používať)
+      const socket = io({ query: { mod: "false" } });
+
+      const offlineCheck = document.getElementById("offlineModeCheck");
+      let offlineMode = false;
+
+      offlineCheck.addEventListener("change", () => {
+        offlineMode = offlineCheck.checked;
+      });
+
       const teamNameInput = document.getElementById("teamNameInput");
       const buzzer = document.getElementById("buzzer");
       const playerCountSpan = document.getElementById("playerCount");
@@ -90,17 +108,32 @@
       let localPlayerNames = [];
       let showPoints = false; // info z servera, či zobrazovať stĺpec "Body"
 
-      // Na zmenu mena
+      // Zmena mena (posiela na server, iba ak nie je offlineMode)
       teamNameInput.addEventListener("change", () => {
-        socket.emit("setName", teamNameInput.value);
+        if (!offlineMode) {
+          socket.emit("setName", teamNameInput.value);
+        }
       });
 
       // Klik
       buzzer.addEventListener("click", () => {
-        socket.emit("buzz");
+        if (offlineMode) {
+          // IBA lokálne prehráme klaksón, žiadny server
+          winnerSound.currentTime = 0;
+          winnerSound.play().catch((err) => {
+            console.log("Audio play error:", err);
+          });
+        } else {
+          // Online mód - posielame "buzz" na server
+          socket.emit("buzz");
+        }
       });
 
-      // Zoznam mien
+      // -------------------------------------------
+      // ONLINE MÓD: server eventy
+      // -------------------------------------------
+
+      // Zoznam mien (keď hráč pribudne/odíde)
       socket.on("playerList", (names) => {
         localPlayerNames = names.slice();
         playerCountSpan.textContent = names.length;
@@ -116,6 +149,7 @@
           const timeCell = row.querySelector(".timeCell");
           const diffCell = row.querySelector(".diffCell");
 
+          // Reset farieb
           row.style.backgroundColor = "";
           row.style.fontWeight = "";
 
@@ -171,14 +205,13 @@
         });
       });
 
-      // "pointsUpdated" => prišla info o bodoch
+      // "pointsUpdated"
       socket.on("pointsUpdated", (dataArray) => {
         dataArray.forEach((item) => {
           const row = findRowByName(item.name);
           if (!row) return;
           const cell = row.querySelector(".pointsCell");
           if (item.points === null) {
-            // null => hide
             cell.textContent = "–";
           } else {
             cell.textContent = item.points;
@@ -186,15 +219,17 @@
         });
       });
 
-      // "showPointsUpdated" => server povie, či zobrazovať stĺpec body
+      // "showPointsUpdated"
       socket.on("showPointsUpdated", (val) => {
         showPoints = val;
         togglePointsColumn(showPoints);
       });
 
+      // -------------------------------------------
       // Pomocné funkcie
+      // -------------------------------------------
+
       function rebuildPlayersTable() {
-        // Prekreslíme celé <tbody>, doplníme stĺpce: #, meno, čas, diff, body
         playersTbody.innerHTML = "";
         localPlayerNames.forEach((name, i) => {
           const row = document.createElement("tr");
@@ -227,7 +262,6 @@
           playersTbody.appendChild(row);
         });
 
-        // Nastav, či je stĺpec body viditeľný
         togglePointsColumn(showPoints);
       }
 
